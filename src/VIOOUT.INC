@@ -1,5 +1,5 @@
 
-;--- protected-mode code for vio output
+;--- 64-bit code for direct video output
 
 bs equ 8	; backspace
 

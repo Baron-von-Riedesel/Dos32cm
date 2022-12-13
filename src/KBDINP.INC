@@ -1,5 +1,5 @@
 
-;--- poll keyboard ( US/GR key layout )
+;--- small 64-bit keyboard driver ( US/GR key layout )
 
 ifndef KEYS
 KEYS textequ <KBD_US>

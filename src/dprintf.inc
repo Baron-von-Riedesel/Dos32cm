@@ -1,4 +1,6 @@
 
+;--- used for debug output only
+
 ;--- simple printf implementation for DOS 32-bit
 ;--- supports:
 ;--- %x  : dword

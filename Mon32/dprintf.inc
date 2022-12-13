@@ -1,4 +1,6 @@
 
+;--- debug output via VioPutChar
+
 ;--- simple printf implementation for DOS 32-bit
 ;--- supports:
 ;--- %x  : dword

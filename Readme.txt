@@ -60,7 +60,7 @@
   The stubs install a tiny subset of the DPMI API. The functions that are
   supported are:
    - int 21h, ah=4Ch: terminate program
-   - int 31h, ax=203h: set exception vector BL to CX:EDX
+   - int 31h, ax=203h: set exception vector BL to CX:EDX ( must be 64-bit! )
    - int 31h, ax=300h: simulate real-mode interrupt BL, EDI=real-mode call
      structure.
   

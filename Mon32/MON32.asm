@@ -1,5 +1,5 @@
 
-;--- this is a simple monitor program loaded by dos32pae.bin
+;--- this is a simple monitor program loaded by dos32cm.bin
 
     .386
     .model flat
@@ -46,6 +46,7 @@ main proc c
     invoke printf, CStr("Mon32 loaded at %X, esp=%X",lf), ebx, esp
     invoke printf, CStr("cs=%X ss=%X ds=%X es=%X fs=%X gs=%x",lf), cs, ss, ds, es, fs, gs
     invoke printf, CStr("ax=%X bx=%X cx=%X dx=%X si=%X di=%X bp=%X",lf), eax, ebx, ecx, edx, esi, edi, ebp
+    call set_exception_handlers
 nextcmd:
     invoke printf, CStr("(cmds: a,d,q): ")
 
@@ -186,5 +187,31 @@ q_cmd proc
     mov ax,4c00h
     int 21h
 q_cmd endp
+
+;--- set exception 0E handler so we 
+;--- won't terminate unexpectedly
+
+set_exception_handlers proc
+
+    mov ecx, cs
+    mov edx, offset exception0E
+    mov bl, 0Eh
+    mov ax, 203h
+    int 31h
+    ret
+
+set_exception_handlers endp
+
+;--- Dos32cm provides a 64-bit exception frame!
+
+exception0E:
+    sti
+    mov edx, [esp+0*8]
+    mov ecx, [esp+1*8]
+    mov eax, [esp+2*8]
+    mov ebx, cr2
+    invoke printf, CStr(lf,"page fault, errcode=%X cs:eip=%X:%X cr2=%X",lf), edx, eax, ecx, ebx
+    mov esp, dwEsp
+    ret
 
     end main

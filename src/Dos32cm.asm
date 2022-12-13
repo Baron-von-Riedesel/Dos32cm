@@ -3,7 +3,7 @@
 ;--- Note: requires at least JWasm v2.13!
 ;--- Also: needs a 64bit cpu in real-mode to run.
 ;--- To create the binary enter:
-;---  JWasm -mz DOS32lm.asm
+;---  JWasm -mz DOS32cm.asm
 
     .model small
     .dosseg
@@ -14,7 +14,7 @@ ifndef ?IRQ0TORM
 ?IRQ0TORM equ 1	; 1=route IRQ0 (timer) to real-mode
 endif
 ?IRQ1TORM equ 1	; 1=route IRQ1 (kbd) to real-mode
-?LOWVIO   equ 0	; 1=low level video out
+?LOWVIO   equ 1	; 1=low level video out
 
 DGROUP group _TEXT	;makes a tiny model
 
@@ -27,8 +27,8 @@ DGROUP group _TEXT	;makes a tiny model
 
 ?MPIC  equ 78h	; master PIC base, remapped to 78h
 ?SPIC  equ 70h	; slave PIC, isn't changed
-?RESETLME equ 0;1=(re)set EFER.LME for temp switch to real-mode
-?RESETPAE equ 1;1=(re)set CR4.PAE  for temp switch to real-mode
+?RESETLME equ 0	; 1=(re)set EFER.LME for temp switch to real-mode
+?RESETPAE equ 1	; 1=(re)set CR4.PAE  for temp switch to real-mode
 ?IDTADR   equ 100000h	;address of IDT
 
 EMM struct  ;XMS block move help struct
@@ -119,14 +119,18 @@ nullidt label fword     ; IDTR for real-mode
     dd 0
   
 xmsaddr dd 0
+dwBase  dd 0	; linear base of stub
 dwCSIP  label dword
-adjust  dd 0
+adjust  dd 0	; used during rm init only
 pPML4   dd 0
 retad   label fword
         dd 0
         dw SEL_CODE64
 xmshdl  dw -1
 fhandle dw -1
+
+excvectors label dword
+		dd 32*2 dup (0)
 
     .data?
 
@@ -197,6 +201,7 @@ start16 proc
     mov ax,cs
     movzx eax,ax
     shl eax,4
+    mov [dwBase], eax
     add dword ptr [GDTR+2], eax ; convert offset to linear address
     mov word ptr [GDT + SEL_CODE16 + 2], ax
     mov word ptr [GDT + SEL_DATA16 + 2], ax
@@ -1217,6 +1222,15 @@ excno = 0
     excno = excno+1
     endm
 @@:
+
+    push rax
+    mov eax, [esp+8]
+    shl eax, 3
+    add eax, [dwBase]
+    cmp word ptr [eax+offset excvectors+4], 0
+    jnz routeexc
+    pop rax
+
     call WriteStrX
     db 10,"Exception ",0
     pop rax
@@ -1265,6 +1279,20 @@ endif
     call WriteChr
     mov ax,4cffh
     int 21h
+
+;--- route exception to exception handler;
+;--- frame is 64-bit, though.
+
+routeexc:
+    push rcx
+    mov ecx, [eax+offset excvectors]
+    mov ax, word ptr [eax+offset excvectors+4]
+    mov [esp+2*8+0], ecx
+    mov [esp+2*8+4], ax
+    pop rcx
+    pop rax
+    retf
+
 
 ;--- IRQs 0-7
 
@@ -1508,29 +1536,28 @@ int31_300:
     pop rax
     iretq
 
-;--- setting exception vectors won't work, since
-;--- exceptions must be handled by 64-bit code.
+;--- exception vectors in IDT must be 64-bit!
+;--- so we don't modify the IDT directly, instead maintain a table
+;--- of 32-bit vectors.
 
 int31_203:
     cmp bl,20h
     jae ret_with_carry
-    push rax
-    push rdi
-    mov edi,?IDTADR
-    movzx eax, bl
-    shl eax,4
-    add edi, eax
-    mov rax, rdx
-    cld
-    stosw
-    mov ax,cx
-    stosw
-    mov ax,8E00h
-    stosd           ;+store highword edx!
-    shr rax,32
-    stosd
-    pop rdi
-    pop rax
+    push rbx
+
+;--- while direct memory accesses are handled correctly ( due to RIP-relative
+;--- addressing in 64-bit ), offsets are different - they're still relative
+;--- to DGROUP; there's no automatic fixup; hence we need to add DGROUP's
+;--- linear address.
+
+    movzx ebx, bl
+    shl ebx, 3
+    add ebx, [dwBase]
+    add ebx, offset excvectors
+;    invoke dprintf, CStr64("int 31h, 203: ebx=%X",10), rbx
+    mov [ebx+0], edx
+    mov [ebx+4], cx
+    pop rbx
     iretq
 int31 endp
 

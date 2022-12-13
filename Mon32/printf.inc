@@ -1,5 +1,7 @@
 
 ;--- simple printf implementation for DOS 32-bit
+;--- uses DOS console functions.
+
 ;--- supports:
 ;--- %x  : dword
 ;--- %lx : qword 
