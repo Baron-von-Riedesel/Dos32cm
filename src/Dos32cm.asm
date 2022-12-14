@@ -5,7 +5,7 @@
 ;--- To create the binary enter:
 ;---  JWasm -mz DOS32cm.asm
 
-    .model small
+    .model tiny
     .dosseg
     option casemap:none
     .stack 5120
@@ -15,8 +15,9 @@ ifndef ?IRQ0TORM
 endif
 ?IRQ1TORM equ 1	; 1=route IRQ1 (kbd) to real-mode
 ?LOWVIO   equ 1	; 1=low level video out
+?KD       equ 0	; 1=support kernel debugger ( not yet )
 
-DGROUP group _TEXT	;makes a tiny model
+;DGROUP group _TEXT	;makes a tiny model
 
     .x64p
 
@@ -97,19 +98,22 @@ SEL_DATA16 equ 5*8
 
     .code
 
-    assume ds:DGROUP
-
 GDT dq 0                ; null descriptor
     dw -1,0,9A00h,0AFh  ; 64-bit code descriptor
     dw -1,0,9A00h,0CFh  ; 32-bit code descriptor
     dw -1,0,9200h,0CFh  ; 32-bit data descriptor
     dw -1,0,9A00h,0h    ; 16-bit, 64k code descriptor
     dw -1,0,9200h,0h    ; 16-bit, 64k data descriptor
-
-    .data
+if ?KD
+SEL_KD equ $ - GDT
+    dw 0,0,0,0
+    dw 0,0,0,0
+    dw 0,0,0,0
+endif
+SIZEGDT equ $ - GDT
 
 GDTR label fword        ; Global Descriptors Table Register
-    dw 6*8-1            ; limit of GDT (size minus one)
+    dw SIZEGDT-1        ; limit of GDT (size minus one)
     dd offset GDT       ; linear address of GDT
 IDTR label fword        ; IDTR in long mode
     dw 256*16-1         ; limit of IDT (size minus one)
@@ -117,7 +121,9 @@ IDTR label fword        ; IDTR in long mode
 nullidt label fword     ; IDTR for real-mode
     dw 3FFh
     dd 0
-  
+
+    .data
+
 xmsaddr dd 0
 dwBase  dd 0	; linear base of stub
 dwCSIP  label dword
@@ -126,6 +132,9 @@ pPML4   dd 0
 retad   label fword
         dd 0
         dw SEL_CODE64
+if ?KD
+pminit  df 0
+endif
 xmshdl  dw -1
 fhandle dw -1
 
@@ -373,9 +382,9 @@ endif
     mov adjust, eax
     add eax, ebx
     mov pPML4, eax      ; allocate the first page for PML4
-	shr eax,12
+    shr eax,12
     mov physBase, eax
-	inc eax
+    inc eax
     mov physCurr, eax	; start of free physical pages
 
 ;--- prepare EMB moves
@@ -399,7 +408,7 @@ endif
     inc physCurr
     push eax
     sub eax,physBase
-	shl eax,12
+    shl eax,12
     add eax,adjust
     mov emm2.dstofs, eax
     mov ecx, 1000h		;copy IDT to ext memory
@@ -539,9 +548,9 @@ if 0 ; don't set fs/gs in long mode
 endif
 
 ;--- clear NT flag
-	pushf
-	and byte ptr [esp+1], 3Fh
-	popf
+    pushf
+    and byte ptr [esp+1], 3Fh
+    popf
 
 ;---  get 32-bit entry
 
@@ -1139,13 +1148,13 @@ endif
 _TEXT64 segment para use64 public 'CODE'
 _TEXT64 ends
 
-	.code _TEXT64
+    .code _TEXT64
 
 ;--- screen output for default exception handlers
 
 if ?LOWVIO
-	include vioout.inc
-	include dprintf.inc
+    include vioout.inc
+    include dprintf.inc
 endif
 WriteChr proc
     cmp al,10
@@ -1231,6 +1240,7 @@ excno = 0
     jnz routeexc
     pop rax
 
+
     call WriteStrX
     db 10,"Exception ",0
     pop rax
@@ -1244,6 +1254,10 @@ excno = 0
 ;    mov rax,nthdr.OptionalHeader.ImageBase
     mov eax, nthdr.OptionalHeader.ImageBase
     call WriteDW
+    call WriteStrX
+    db " stubbase=",0
+    mov eax, [dwBase]
+    call WriteDW
 if 0
     call WriteStrX
     db " rsi=",0
@@ -1254,6 +1268,7 @@ if 0
     mov rax,rdi
     call WriteQW
 endif
+
     call WriteStrX
     db 10,"[rsp]=",0
     xor ecx,ecx
@@ -1277,6 +1292,7 @@ endif
     jnz @B
     mov al,10
     call WriteChr
+
     mov ax,4cffh
     int 21h
 
@@ -1326,9 +1342,9 @@ endif
     mov esp, eax
 
 ;--- reload DS/ES
-	mov ax, ss
-	mov ds, ax
-	mov es, ax
+    mov ax, ss
+    mov ds, ax
+    mov es, ax
 
 if ?RESETLME
     pop edx

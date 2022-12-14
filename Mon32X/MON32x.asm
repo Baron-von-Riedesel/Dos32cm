@@ -1,76 +1,88 @@
 
-;--- this is a simple monitor program loaded by dos32cm.bin
+;--- mixing 32- and 64-bit sections in ".model flat"
+;--- this requires JWasm v2.17 and using option -pe.
 
     .386
     .model flat
     option casemap:none
     option proc:private
 
+TCMD equ 0      ; 1=activate 't'
+
 lf  equ 10 
+
+    .data?
+
+qwRsp   dq ?    ; saved stack pointer
+address dq ?    ; current offset for d cmd
+
+buffer db 20 dup (?); keyboard buffer
+lbuffer equ $ - offset buffer
+
+    .code
+
+f64 label fword
+    dd offset main64
+    dw 8        ; selector 8 is 64-bit code segment ( Dos32cm specific )
+
+main proc c
+
+    jmp [f64]
+
+main endp
 
 ;--- define a string
 CStr macro text:vararg
 local sym
     .const
 sym db text,0
-    .code
-    exitm <offset sym>
+    .code _TEXT64
+    exitm <addr sym>
 endm
 
-    .data?
+    .x64
 
-dwEsp   dd ?    ;stack pointer
-address dd ?
+_TEXT64 segment use64 'CODE'
+_TEXT64 ends
 
-;--- keyboard buffer
-buffer db 20 dup (?)
-lbuffer equ $ - offset buffer
+    .code _TEXT64
 
-    .code
-
-ifdef _DEBUG
-;--- use direct video access to avoid mode switches
-    include vioout.inc
-    include dprintf.inc
-printf textequ <dprintf>
-else
     include printf.inc
-endif
 
-;--- this is the entry point.
-;--- it's called by the stub with registers:
-;--- ebx: image base
-;--- esp: bottom of (reserved) stack
+main64 proc
 
-main proc c
-
-    invoke printf, CStr("Mon32 loaded at %X, esp=%X",lf), ebx, esp
-    invoke printf, CStr("cs=%X ss=%X ds=%X es=%X fs=%X gs=%x",lf), cs, ss, ds, es, fs, gs
-    invoke printf, CStr("ax=%X bx=%X cx=%X dx=%X si=%X di=%X bp=%X",lf), eax, ebx, ecx, edx, esi, edi, ebp
+    and sp, 0fff0h
+    invoke printf, CStr("Mon32x loaded at %X, rsp=%lX",lf), rbx, rsp
+    invoke printf, CStr("ax=%X bx=%X cx=%X dx=%X si=%X di=%X bp=%X",lf), rax, rbx, rcx, rdx, rsi, rdi, rbp
     call set_exception_handlers
 nextcmd:
     invoke printf, CStr("(cmds: a,d,q): ")
 
-    mov ah,1        ;read a key from keyboard with echo
+    mov ah,1        ; read a key from keyboard with echo
     int 21h
-    push offset nextcmd
-    mov dwEsp, esp
-    push eax
+    lea rcx, nextcmd
+    push rcx
+    mov [qwRsp], rsp
+    push rax
     invoke printf, CStr(lf)
-    pop eax
+    pop rax
     cmp al,'a'
     jz a_cmd
     cmp al,'d'
     jz d_cmd
     cmp al,'q'
     jz q_cmd
+if TCMD
+    cmp al,'t'
+    jz t_cmd
+endif
     cmp al,0dh      ;ENTER?
     jz newline
     mov ecx, eax
-    invoke printf, CStr("unknown cmd: %c",lf), ecx
+    invoke printf, CStr("unknown cmd: %c",lf), rcx
 newline:
     ret
-main endp
+main64 endp
 
 ;--- get a line of characters
 ;--- ebx->buffer
@@ -115,28 +127,29 @@ getline endp
 a_cmd proc
     invoke printf, CStr("enter start address for d cmd: ")
     mov esi, lbuffer
-    lea ebx, buffer
+    lea rbx, buffer
     call getline
     and edi,edi        ;at least 1 digit entered?
     jz done
     xor edi,edi
-    xor esi,esi
-    .while byte ptr [ebx+edi]
-        mov al,byte ptr [ebx+edi]
+    xor rsi,rsi
+    .while byte ptr [rbx+rdi]
+        mov al,byte ptr [rbx+rdi]
         sub al,'0'
         jc error
         cmp al,9
         jbe @F
+        or al, 20h
         sub al, 27h
         cmp al, 0fh
         ja error
 @@:
         movzx eax,al
-        shl esi,4
-        add esi,eax
-        inc edi
+        shl rsi,4
+        add rsi,rax
+        inc rdi
     .endw
-    mov [address],esi
+    mov [address],rsi
 done:
     invoke printf, CStr(lf)
     ret
@@ -149,36 +162,37 @@ a_cmd endp
 ;--- display memory dump
 
 d_cmd proc
-    mov esi,[address]
-    mov ecx,8
+    mov rsi, [address]
+    mov ecx, 8
 nextline:
-    push ecx
-    invoke printf, CStr("%08X: "), esi
-    mov ecx,16
+    push rcx
+    invoke printf, CStr("%08lX: "), rsi
+    mov ecx, 16
 @@:
-    push ecx
+    push rcx
     lodsb
     movzx eax, al
-    invoke printf, CStr("%02X "), eax
-    pop ecx
+    invoke printf, CStr("%02X "), rax
+    pop rcx
     loop @B
     invoke printf, CStr(" ")
-    sub esi,16
-    mov ecx,16
+    sub rsi, 16
+    mov ecx, 16
 nextc:
     lodsb
-    cmp al,20h
+    cmp al, 20h
     jnc @F
-    mov al,'.'
+    mov al, '.'
 @@:
-    push ecx
-    invoke printf, CStr("%c"), eax
-    pop ecx
+    push rcx
+    invoke printf, CStr("%c"), rax
+    pop rcx
     loop nextc
     invoke printf, CStr(lf)
-    pop ecx
-    loop nextline
-    mov [address],esi
+    pop rcx
+    dec ecx
+    jnz nextline
+    mov [address], rsi
     ret
 d_cmd endp
 
@@ -189,7 +203,21 @@ q_cmd proc
     int 21h
 q_cmd endp
 
-;--- set exception 0E handler so we won't terminate
+if TCMD
+
+;--- 't': some printf tests
+
+t_cmd proc
+    or rax, -1
+    invoke printf, CStr("%u %d %x",10), rax, rax, rax
+    or rax, -1
+    invoke printf, CStr("%lu %ld %lx",10), rax, rax, rax
+    ret
+t_cmd endp
+
+endif
+
+;--- handle exception 0E so we won't terminate
 ;--- if an invalid address has been entered.
 
 set_exception_handlers proc
@@ -207,12 +235,12 @@ set_exception_handlers endp
 
 exception0E:
     sti
-    mov edx, [esp+0*8]
-    mov ecx, [esp+1*8]
-    mov eax, [esp+2*8]
-    mov ebx, cr2
-    invoke printf, CStr(lf,"page fault, errcode=%X cs:eip=%X:%X cr2=%X",lf), edx, eax, ecx, ebx
-    mov esp, dwEsp
+    mov rdx, [rsp+0*8]
+    mov rcx, [rsp+1*8]
+    mov rax, [rsp+2*8]
+    mov rbx, cr2
+    invoke printf, CStr(lf,"page fault, errcode=%X cs:eip=%X:%X cr2=%lX",lf), rdx, rax, rcx, rbx
+    mov rsp, [qwRsp]
     ret
 
     end main

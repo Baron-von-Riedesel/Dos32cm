@@ -1,7 +1,7 @@
 
-;--- simple printf implementation for 32-bit
-;--- uses DOS console functions.
+;--- simple printf() 64-bit
 
+;--- simple printf implementation for DOS 32-bit
 ;--- supports:
 ;--- %x  : dword
 ;--- %lx : qword 
@@ -15,52 +15,43 @@
 ;--- i64toa(long long n, char * s, int base);
 ;--- convert 64-bit long long to string
 
-i64toa PROC stdcall uses esi edi number:qword, outb:ptr, base:dword
+i64toa PROC stdcall uses rdi number:qword, outb:ptr, base:dword
 
 	mov ch,0
-	mov edi, base
-	mov eax, dword ptr number+0
-	mov esi, dword ptr number+4
-	cmp edi,-10
+	movsxd rdi, base
+	mov rax, number
+	cmp rdi,-10
 	jne @F
-	neg edi
-	and esi,esi
-	jns @F
-	neg esi
-	neg eax
-	sbb esi,0
+	neg rdi
+	neg rax
 	mov ch,'-'
 @@:
-	mov ebx,outb
-	add ebx,22
-	mov byte ptr [ebx],0
+	mov rbx, outb
+	add rbx,22
+	mov byte ptr [rbx],0
 @@nextdigit:
-	dec ebx
-	xor edx,edx
-	xchg eax,esi
-	div edi
-	xchg eax,esi
-	div edi
+	dec rbx
+	xor rdx, rdx
+	div rdi
 	add dl,'0'
 	cmp dl,'9'
 	jbe @F
 	add dl,7+20h
 @@:
-	mov [ebx],dl
-	mov edx, eax
-	or edx, esi
+	mov [rbx], dl
+	and rax, rax
 	jne @@nextdigit
 	cmp ch,0
 	je @F
-	dec ebx
-	mov [ebx],ch
+	dec rbx
+	mov [rbx],ch
 @@:
-	mov eax,ebx
+	mov rax, rbx
 	ret
 
 i64toa ENDP
 
-printf PROC c uses ebx esi edi fmt:ptr sbyte, args:VARARG
+printf PROC c uses rbx rsi rdi fmt:ptr, args:VARARG
 
 local flag:byte
 local longarg:byte
@@ -68,9 +59,9 @@ local size_:dword
 local fillchr:dword
 local szTmp[24]:byte
 
-	lea edi,args
+	lea rdi,args
 @@L335:
-	mov esi,fmt
+	mov rsi,fmt
 nextchar:
 	lodsb
 	or al,al
@@ -80,22 +71,22 @@ nextchar:
 	call handle_char
 	jmp nextchar
 done:
-	xor eax,eax
 	ret 
 
 formatitem:
-	push offset @@L335
+	lea rax, @@L335
+	push rax
 	xor edx,edx
 	mov [longarg],dl
 	mov bl,1
 	mov cl,' '
-	cmp BYTE PTR [esi],'-'
+	cmp BYTE PTR [rsi],'-'
 	jne @F
 	dec bl
 	inc esi
 @@:
 	mov [flag],bl
-	cmp BYTE PTR [esi],'0'
+	cmp BYTE PTR [rsi],'0'
 	jne @F
 	mov cl,'0'
 	inc esi
@@ -103,7 +94,7 @@ formatitem:
 	mov [fillchr],ecx
 	mov ebx,edx
 
-	.while ( byte ptr [esi] >= '0' && byte ptr [esi] <= '9' )
+	.while ( byte ptr [rsi] >= '0' && byte ptr [rsi] <= '9' )
 		lodsb
 		sub al,'0'
 		movzx eax,al
@@ -113,13 +104,13 @@ formatitem:
 	.endw
 
 	mov [size_],ebx
-	cmp BYTE PTR [esi],'l'
+	cmp BYTE PTR [rsi],'l'
 	jne @F
 	mov [longarg],1
-	inc esi
+	inc rsi
 @@:
 	lodsb
-	mov [fmt],esi
+	mov [fmt], rsi
 	cmp al,'x'
 	je handle_x
 	cmp al,'X'
@@ -134,21 +125,20 @@ formatitem:
 	je handle_c
 	and al,al
 	jnz @F
-	pop eax
+	pop rax
 	jmp done
 handle_c:
-	mov eax,[edi]
-	add edi, 4
+	mov eax,[rdi]
+	add rdi, 8
 @@:
 	call handle_char
 	retn
 
 handle_s:
-	mov esi,[edi]
-	add edi,4
+	mov rsi,[rdi]
+	add rdi, 8
 	jmp print_string
 handle_d:
-handle_i:
 	mov ebx,-10
 	jmp @F
 handle_u:
@@ -157,31 +147,26 @@ handle_u:
 handle_x:
 	mov ebx, 16
 @@:
-	xor edx,edx
-	mov eax,[edi]
-	add edi,4
-	cmp longarg,1
-	jnz @F
-	mov edx,[edi]
-	add edi,4
-	jmp printnum
-@@:
-	and ebx,ebx
-	jns @F
-	cdq
-@@:
-printnum:
-	lea esi, szTmp
-	invoke i64toa, edx::eax, esi, ebx
-	mov esi, eax
+	mov rax,[rdi]
+	add rdi, 8
+	cmp longarg, 0
+	jnz print_num
+	movsxd rax, eax
+	and ebx, ebx
+	js print_num
+	mov eax, eax	; clear bits 32-63
+print_num:
+	lea rsi, szTmp
+	invoke i64toa, rax, rsi, ebx
+	mov rsi, rax
 
-print_string:		;print string ESI, size EAX
-	mov eax, esi
-	.while byte ptr [esi]
-		inc esi
+print_string:		;print asciiz string RSI
+	mov rax, rsi
+	.while byte ptr [rsi]
+		inc rsi
 	.endw
-	sub esi, eax
-	xchg eax, esi
+	sub rsi, rax
+	xchg rax, rsi
 	mov ebx,size_
 	sub ebx,eax
 	.if flag == 1
@@ -192,7 +177,7 @@ print_string:		;print string ESI, size EAX
 		.endw
 	.endif
 
-	.while byte ptr [esi]
+	.while byte ptr [rsi]
 		lodsb
 		call handle_char	;print char of string
 	.endw
@@ -205,17 +190,17 @@ print_string:		;print string ESI, size EAX
 	retn
 
 handle_char:
-	mov dl,al
-	cmp dl,10
+	cmp al,10
 	jnz @F
-	mov dl,13
-	mov ah,2
-	int 21h
-	mov dl,10
+	mov al,13
+	call @F
+	mov al,10
 @@:
-	mov ah,2
+	mov dl, al
+	mov ah, 2
 	int 21h
 	retn
+
 	align 4
 
 printf ENDP

@@ -145,10 +145,9 @@ handle_c:
 
 handle_s:
 	mov esi,[edi]
-	add edi,8
+	add edi, 8
 	jmp print_string
 handle_d:
-handle_i:
 	mov ebx,-10
 	jmp @F
 handle_u:
@@ -157,18 +156,16 @@ handle_u:
 handle_x:
 	mov ebx, 16
 @@:
-	xor edx,edx
 	mov rax,[edi]
-	add edi,8
+	add edi, 8
 	cmp longarg,1
 	jz @F
+	movsxd rax, eax
+	and ebx, ebx
+	js @F
 	mov eax, eax
 @@:
-	and ebx,ebx
-	jns @F
-	cdq
-@@:
-printnum:
+print_num:
 	lea rsi, szTmp
 	invoke di64toa, rax, esi, ebx
 	mov esi, eax
