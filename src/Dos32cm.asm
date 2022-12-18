@@ -10,11 +10,9 @@
     option casemap:none
     .stack 5120
 
-ifndef ?IRQ0TORM
 ?IRQ0TORM equ 1	; 1=route IRQ0 (timer) to real-mode
-endif
 ?IRQ1TORM equ 1	; 1=route IRQ1 (kbd) to real-mode
-?LOWVIO   equ 1	; 1=low level video out
+?LOWVIO   equ 1	; 1=low level video out for default exc handler
 ifndef ?KD
 ?KD       equ 0	; 1=support kernel debugger ( not yet )
 endif
@@ -33,10 +31,12 @@ endif
 
 ?MPIC  equ 78h	; master PIC base, remapped to 78h
 ?SPIC  equ 70h	; slave PIC, isn't changed
-?RESETLME equ 0	; 1=(re)set EFER.LME for temp switch to real-mode
+
+?RESETLME equ 1	; 1=(re)set EFER.LME for temp switch to real-mode
 ?RESETPAE equ 1	; 1=(re)set CR4.PAE  for temp switch to real-mode
-?IDTADR   equ 100000h	;address of IDT
 ?INITFSGS equ 1
+
+?IDTADR   equ 100000h	;address of IDT
 
 EMM struct  ;XMS block move help struct
 _size  dd ?
@@ -71,7 +71,9 @@ endm
 endm
 @lidt macro addr
 ;--- 16-bit variant ok, IDT remains in 24-bit address space
-;    db 66h
+if ?IDTADR ge 1000000h
+    db 66h
+endif
     lidt addr
 endm
 
@@ -925,6 +927,10 @@ call_rmode proc
     movzx esp,sp
     call switch2pm
 
+	pushf
+	btr word ptr [esp],14	; clear NT in flags
+	popf
+
 ;--- switch stack back to flat
     mov dx, SEL_FLAT
     movzx eax, cs:[wStkBot+2]
@@ -1538,6 +1544,8 @@ pcall_rmode label ptr far32
     dw SEL_CODE16
     .code _TEXT64
 int31_300:
+	push fs
+	push gs
     push rax
     push rcx
     push rdx
@@ -1586,7 +1594,7 @@ int31_300:
     movsq
     movsq
     movsw
-;    sti
+
     pop rdi
     pop rsi
     pop rbp
@@ -1594,6 +1602,8 @@ int31_300:
     pop rdx
     pop rcx
     pop rax
+	pop gs
+	pop fs
     iretq
 
 ;--- exception vectors in IDT must be 64-bit!
