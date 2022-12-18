@@ -15,7 +15,9 @@ ifndef ?IRQ0TORM
 endif
 ?IRQ1TORM equ 1	; 1=route IRQ1 (kbd) to real-mode
 ?LOWVIO   equ 1	; 1=low level video out
+ifndef ?KD
 ?KD       equ 0	; 1=support kernel debugger ( not yet )
+endif
 
 ;DGROUP group _TEXT	;makes a tiny model
 
@@ -23,6 +25,9 @@ endif
 
     include peimage.inc
     include dpmi.inc
+if ?KD
+    include debugsys.inc
+endif
 
     option MZ:sizeof IMAGE_DOS_HEADER   ;set min size of MZ header if jwasm's -mz option is used
 
@@ -31,6 +36,7 @@ endif
 ?RESETLME equ 0	; 1=(re)set EFER.LME for temp switch to real-mode
 ?RESETPAE equ 1	; 1=(re)set CR4.PAE  for temp switch to real-mode
 ?IDTADR   equ 100000h	;address of IDT
+?INITFSGS equ 1
 
 EMM struct  ;XMS block move help struct
 _size  dd ?
@@ -98,17 +104,17 @@ SEL_DATA16 equ 5*8
 
     .code
 
-GDT dq 0                ; null descriptor
-    dw -1,0,9A00h,0AFh  ; 64-bit code descriptor
-    dw -1,0,9A00h,0CFh  ; 32-bit code descriptor
-    dw -1,0,9200h,0CFh  ; 32-bit data descriptor
-    dw -1,0,9A00h,0h    ; 16-bit, 64k code descriptor
-    dw -1,0,9200h,0h    ; 16-bit, 64k data descriptor
+GDT dq 0                ; 00 null descriptor
+    dw -1,0,9A00h,0AFh  ; 08 64-bit code descriptor
+    dw -1,0,9A00h,0CFh  ; 10 32-bit code descriptor
+    dw -1,0,9200h,0CFh  ; 18 32-bit data descriptor
+    dw -1,0,9A00h,0h    ; 20 16-bit, 64k code descriptor
+    dw -1,0,9200h,0h    ; 28 16-bit, 64k data descriptor
 if ?KD
 SEL_KD equ $ - GDT
-    dw 0,0,0,0
-    dw 0,0,0,0
-    dw 0,0,0,0
+    dw 0,0,0,0          ; 30 kd code
+    dw 0,0,0,0          ; 38 kd data
+    dw 0,0,0,0          ; 40 kd scratch
 endif
 SIZEGDT equ $ - GDT
 
@@ -475,6 +481,28 @@ endif
     int 21h
     mov fhandle,-1
 
+if ?KD
+	mov ah, D386_Identify
+	int D386_RM_Int
+	cmp ax, D386_Id
+	jnz @F
+	push di
+	mov bx, SEL_FLAT
+	mov cx, SEL_KD
+	mov dx, 0	; no GDT sel
+	mov si, offset GDT
+	mov ah, D386_Prepare_PMode
+	int D386_RM_Int
+	mov dword ptr [pminit+0], edi
+	mov  word ptr [pminit+4], es
+	push ds
+	pop es
+	pop di
+@@:
+endif
+
+
+
 ;--- check that image base is either 
 ;--- in range 0-7fffffffffffh
 ;--- or in range ffff800000000000h-ffffffffffffffffh.
@@ -541,8 +569,8 @@ endif
     mov esp,ecx
     mov ds,ax
     mov es,ax
-if 0 ; don't set fs/gs in long mode
-    xor ax,ax
+if ?INITFSGS
+    xor ax, ax
     mov fs,ax
     mov gs,ax
 endif
@@ -551,6 +579,19 @@ endif
     pushf
     and byte ptr [esp+1], 3Fh
     popf
+
+if ?KD
+	cmp word ptr cs:[pminit+4],0
+	jz nokd
+	db 0eah		; do a far16 jmp to load CS with a valid selector
+	dw @F
+	dw SEL_CODE16
+@@:
+	mov edi, ?IDTADR
+	mov al, PMINIT_INIT_IDT
+	call cs:[pminit]
+nokd:
+endif
 
 ;---  get 32-bit entry
 
@@ -740,6 +781,10 @@ backtoreal proc
     mov ax,SEL_DATA16   ; set SS, DS and ES to 16bit, 64k data
     mov ds,ax
     mov es,ax
+if 1
+    mov fs,ax
+    mov gs,ax
+endif
     mov ss,ax
     mov sp,[wStkBot]
     call switch2rm
@@ -1268,7 +1313,6 @@ if 0
     mov rax,rdi
     call WriteQW
 endif
-
     call WriteStrX
     db 10,"[rsp]=",0
     xor ecx,ecx

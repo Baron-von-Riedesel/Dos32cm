@@ -149,6 +149,13 @@ a_cmd proc
         add rsi,rax
         inc rdi
     .endw
+;--- check if address valid
+    mov rax, rsi
+    shr rax, 48-1
+    jz @F              ; ok if bits 47-63 are all 0
+    cmp rax, 1ffffh
+    jnz error          ; ok if bits 47-63 are all 1
+@@:
     mov [address],rsi
 done:
     invoke printf, CStr(lf)
@@ -172,7 +179,7 @@ nextline:
     push rcx
     lodsb
     movzx eax, al
-    invoke printf, CStr("%02X "), rax
+    invoke printf, CStr("%02X "), eax
     pop rcx
     loop @B
     invoke printf, CStr(" ")
