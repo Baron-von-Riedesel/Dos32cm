@@ -163,7 +163,7 @@ nthdr   IMAGE_NT_HEADERS <>
 sechdr  IMAGE_SECTION_HEADER <>
 emm     EMM <>   ;xms block move structure
 emm2    EMM <>   ;another one for nested calls
-dwESP    dd ?    ;protected-mode ESP
+qwRSP    dq ?    ;protected-mode RSP
 physBase dd ?    ;physical page start memory block
 physCurr dd ?    ;physical page free memory
 physImg  dd ?    ;physical page image base
@@ -903,6 +903,10 @@ call_rmode proc
     shl eax, 4
     mov ss, dx
     sub esp, eax
+if 1	; ensure fs/gs contain a valid 64k shadow
+    mov fs, dx
+    mov gs, dx
+endif
 
     call switch2rm
     pop dword ptr cs:retad
@@ -926,11 +930,11 @@ call_rmode proc
     pushad
     movzx esp,sp
     call switch2pm
-
-	pushf
-	btr word ptr [esp],14	; clear NT in flags
-	popf
-
+if 0
+    pushf
+    btr word ptr [esp],14   ; clear NT in flags
+    popf
+endif
 ;--- switch stack back to flat
     mov dx, SEL_FLAT
     movzx eax, cs:[wStkBot+2]
@@ -1371,6 +1375,12 @@ if ?RESETLME
     push ecx
     push edx
 endif
+    push ds
+    push es
+if 1
+	push fs
+	push gs
+endif
 
 ;--- we're on a 32-bit flat stack, switch to 16-bit stack
     mov eax, esp
@@ -1378,7 +1388,11 @@ endif
     pop ss
     mov sp,cs:[wStkBot]
     push eax
-
+if 1
+	mov ax, ss
+	mov fs, ax
+	mov gs, ax
+endif
     call switch2rm  ;modifies eax [, ecx, edx]
 ;--- SS still holds a selector - hence a possible temporary 
 ;--- stack switch inside irq handler would cause a crash.
@@ -1391,11 +1405,12 @@ endif
     pop ss
     mov esp, eax
 
-;--- reload DS/ES
-    mov ax, ss
-    mov ds, ax
-    mov es, ax
-
+if 1
+	pop gs
+	pop fs
+endif
+    pop es
+    pop ds
 if ?RESETLME
     pop edx
     pop ecx
@@ -1416,6 +1431,8 @@ p&prefix&_rm label fword
     dw SEL_CODE16
     .code _TEXT64
 prefix:
+;--- switch to 16-bit protected-mode.
+;--- this assumes that high32 of rsp is zero
     call p&prefix&_rm
     iretq
 endm
@@ -1452,10 +1469,10 @@ Irq080F:
     out 0A0h,al
     jmp Irq0007_1
 
-;--- load 32-bit registers ( clears upper 32bits of 64-bit regs, which doesn't matter in compatibility mode ). 
+;--- load 32-bit registers
 
 @loadreg macro reg
-if 0
+if 1
     push R&reg
     mov E&reg,[rsp+8].RMCS.rE&reg
     mov [rsp],E&reg
@@ -1472,37 +1489,37 @@ endm
 int21 proc
     cmp ah,4Ch
     jz int21_4c
-    and byte ptr [esp+2*8],0FEh ;clear carry flag
-    sub esp,38h
-    mov [esp].RMCS.rEDI, edi
-    mov [esp].RMCS.rESI, esi
-    mov [esp].RMCS.rEBP, ebp
-    mov [esp].RMCS.rEBX, ebx
-    mov [esp].RMCS.rEDX, edx
-    mov [esp].RMCS.rECX, ecx
-    mov [esp].RMCS.rEAX, eax
-    mov [esp].RMCS.rFlags, 0202h
-;    mov [esp].RMCS.rES, es
-;    mov [esp].RMCS.rDS, ds
+    and byte ptr [rsp+2*8],0FEh ;clear carry flag
+    sub rsp,38h
+    mov [rsp].RMCS.rEDI, edi
+    mov [rsp].RMCS.rESI, esi
+    mov [rsp].RMCS.rEBP, ebp
+    mov [rsp].RMCS.rEBX, ebx
+    mov [rsp].RMCS.rEDX, edx
+    mov [rsp].RMCS.rECX, ecx
+    mov [rsp].RMCS.rEAX, eax
+    mov [rsp].RMCS.rFlags, 0202h
+;    mov [rsp].RMCS.rES, es
+;    mov [rsp].RMCS.rDS, ds
     mov ax, [wStkBot+2]
-    mov [esp].RMCS.rES, ax
-    mov [esp].RMCS.rDS, ax
-    mov [esp].RMCS.rFS, fs
-    mov [esp].RMCS.rGS, gs
-    mov dword ptr [esp].RMCS.regSP, 0
+    mov [rsp].RMCS.rES, ax
+    mov [rsp].RMCS.rDS, ax
+    mov [rsp].RMCS.rFS, 0
+    mov [rsp].RMCS.rGS, 0
+    mov dword ptr [rsp].RMCS.regSP, 0
     push rdi
-    lea edi,[esp+8]
+    lea rdi,[rsp+8]
     mov bx,21h
     mov cx,0
     mov ax,0300h
     int 31h
     pop rdi
     jc int21_carry
-    mov al,byte ptr [esp].RMCS.rFlags
-    mov byte ptr [esp+38h+2*8],al    ;set CF,ZF,...
+    mov al,byte ptr [rsp].RMCS.rFlags
+    mov byte ptr [rsp+38h+2*8],al    ;set CF,ZF,...
     jmp @F
 int21_carry:
-    or  byte ptr [esp+38h+2*8],1    ;set carry flag
+    or  byte ptr [rsp+38h+2*8],1    ;set carry flag
 @@:
     @loadreg DI
     @loadreg SI
@@ -1511,7 +1528,7 @@ int21_carry:
     @loadreg DX
     @loadreg CX
     @loadreg AX
-    lea esp,[esp+38h]
+    lea rsp,[rsp+38h]
     iretq
 
     .data
@@ -1530,13 +1547,13 @@ int21 endp
 
 int31 proc
 
-    and byte ptr [esp+2*8],0FEh	;clear carry flag
+    and byte ptr [rsp+2*8],0FEh	;clear carry flag
     cmp ax,0300h	;simulate real-mode interrupt?
     jz int31_300
     cmp ax,0203h	;set exception vector?
     jz int31_203
 ret_with_carry:
-    or byte ptr [esp+2*8],1 ;set carry flag
+    or byte ptr [rsp+2*8],1 ;set carry flag
     iretq
     .data
 pcall_rmode label ptr far32
@@ -1544,8 +1561,8 @@ pcall_rmode label ptr far32
     dw SEL_CODE16
     .code _TEXT64
 int31_300:
-	push fs
-	push gs
+    push fs
+    push gs
     push rax
     push rcx
     push rdx
@@ -1553,7 +1570,7 @@ int31_300:
     push rbp
     push rsi
     push rdi
-    mov esi, edi
+    mov rsi, rdi
 
 ;--- the contents of the RMCS has to be copied
 ;--- to conventional memory. We use the DGROUP stack
@@ -1566,7 +1583,7 @@ int31_300:
     sub bx, 30h
     lea edi, [ebx+ecx]
     mov [dwCSIP], eax
-    mov [dwESP], esp
+    mov [qwRSP], rsp
     mov esp, edi
     cld
     cli
@@ -1585,8 +1602,8 @@ int31_300:
     stosd
     call [pcall_rmode]
     mov esi, esp
-    mov esp, [dwESP]
-    mov edi, [esp]
+    mov rsp, [qwRSP]
+    mov rdi, [rsp]
     cld
     movsq   ;copy 2Ah bytes back, don't copy CS:IP & SS:SP fields
     movsq
@@ -1602,8 +1619,8 @@ int31_300:
     pop rdx
     pop rcx
     pop rax
-	pop gs
-	pop fs
+    pop gs
+    pop fs
     iretq
 
 ;--- exception vectors in IDT must be 64-bit!
